@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 # Secure API key from Streamlit Secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.set_page_config(page_title="Streamlit AI App Generator with Dialogue", layout="centered")
+st.set_page_config(page_title="Streamlit AI App Generator with Safe Keys", layout="centered")
 
-st.title("🔧 AI Streamlit App Generator — Iterative with Auto-Correction")
+st.title("🔧 AI Streamlit App Generator — Unique Keys, Auto-Correction")
 
-st.write("Describe what you want your app to do. You can iteratively refine your app. Errors are automatically sent to AI for correction.")
+st.write("Describe what you want your app to do. You can iteratively refine your app. Errors are automatically sent to AI for correction. All widgets will have unique keys to prevent errors.")
 
 # Initialise session state
 if "conversation" not in st.session_state:
@@ -20,8 +20,10 @@ if "conversation" not in st.session_state:
             "Your responses will be inserted dynamically using exec(), within an existing Streamlit app. "
             "The following modules are already imported: 'streamlit as st', 'numpy as np', 'matplotlib.pyplot as plt'. "
             "Do NOT include import statements. Use 'st', 'np', and 'plt' directly. "
+            "When defining Streamlit widgets (e.g., st.slider, st.number_input, st.text_input), you MUST include a unique key argument for each widget, "
+            "such as key='slider_damping', key='input_speed', or key='my_unique_slider'. Do not reuse the same key for multiple widgets. "
             "Your code should: "
-            "- Define Streamlit widgets if needed (e.g., st.slider) "
+            "- Define Streamlit widgets with unique keys "
             "- Plot graphs using plt.figure() or plt.subplots() "
             "- Display figures with st.pyplot(plt.gcf()) or st.pyplot(fig) "
             "- Ensure all variables used are defined within your code block "
