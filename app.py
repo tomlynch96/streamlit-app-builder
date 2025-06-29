@@ -1,7 +1,6 @@
 import streamlit as st
 import openai
 
-# Secure API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="Streamlit App Code Generator with AI", layout="centered")
@@ -10,17 +9,14 @@ st.title("🔧 AI Streamlit Code Generator with Live Preview")
 
 st.write("Describe what you want your Streamlit app to do. The AI will generate valid Streamlit code based on your prompt.")
 
-# User input
 user_prompt = st.text_input("What do you want the app to do?", placeholder="e.g., create a graph of sine and cosine")
 
-# Generate button
 if st.button("Generate Streamlit Code"):
 
     if user_prompt:
         with st.spinner("Generating code with AI..."):
 
             try:
-                # New OpenAI 1.0+ syntax
                 client = openai.Client()
 
                 response = client.chat.completions.create(
@@ -40,15 +36,17 @@ if st.button("Generate Streamlit Code"):
                 st.divider()
                 st.subheader("Live Preview Below:")
 
-                # Extract only runnable code (skip imports)
-                safe_preview = "\n".join([
-                    line for line in generated_code.split("\n")
-                    if not line.strip().startswith("import")
-                ])
+                # Filter out import lines, preserve structure
+                filtered_lines = []
+                for line in generated_code.split("\n"):
+                    if not line.strip().startswith("import"):
+                        filtered_lines.append(line)
+
+                safe_preview = "\n".join(filtered_lines)
 
                 with st.container():
                     try:
-                        exec(safe_preview)
+                        exec(safe_preview, {"st": st})
                     except Exception as e:
                         st.error(f"Error running preview: {e}")
 
