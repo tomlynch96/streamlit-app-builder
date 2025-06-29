@@ -18,7 +18,7 @@ user_prompt = st.text_input("What do you want the app to do?", placeholder="e.g.
 if st.button("Generate Streamlit Code"):
 
     if user_prompt:
-        with st.spinner("Generating concise code with AI..."):
+        with st.spinner("Generating concise, context-aware code with AI..."):
 
             try:
                 client = openai.Client()
@@ -27,12 +27,17 @@ if st.button("Generate Streamlit Code"):
                     model="gpt-4o",
                     messages=[
                         {"role": "system", "content": (
-                            "You are an expert at writing short, complete, valid Streamlit Python apps. "
-                            "Your response will be inserted inside an existing Streamlit app using exec(). "
-                            "The following imports already exist and should not be included again: "
+                            "You are an expert Python developer generating concise, valid Streamlit code for use inside an existing app. "
+                            "Your code will be inserted dynamically using exec(), within an already running Streamlit app. "
+                            "The following modules are already imported and available: "
                             "'import streamlit as st', 'import numpy as np', 'import matplotlib.pyplot as plt'. "
-                            "Write only the code that would go inside the body of the Streamlit app after st.title(). "
-                            "Do not include import statements, explanations, comments, or additional text."
+                            "Do NOT include import statements. Use 'st', 'np', and 'plt' directly as they are pre-defined. "
+                            "Your code should: "
+                            "- Define Streamlit widgets if needed (e.g., st.slider) "
+                            "- Plot graphs using plt.figure() or plt.subplots() "
+                            "- Display figures with st.pyplot(plt.gcf()) or st.pyplot(fig) "
+                            "- Ensure all variables used are defined within your code block "
+                            "Output ONLY valid, executable Python code. Do not include explanations, markdown, comments, or additional text."
                         )},
                         {"role": "user", "content": f"Write Streamlit code that {user_prompt}"},
                     ],
@@ -66,4 +71,3 @@ if st.button("Generate Streamlit Code"):
 
     else:
         st.warning("Please enter a prompt to continue.")
-
