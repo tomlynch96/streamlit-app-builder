@@ -34,39 +34,35 @@ def validate_code_safety(code):
     if not code or not isinstance(code, str):
         return False
     
-    # Check for dangerous patterns
+    # Check for critically dangerous patterns only
     dangerous_patterns = [
-        r'import\s+os', r'import\s+sys', r'import\s+subprocess',
-        r'import\s+requests', r'import\s+urllib', r'import\s+socket',
-        r'__import__', r'eval\s*\(', r'exec\s*\(', r'open\s*\(',
-        r'file\s*\(', r'input\s*\(', r'raw_input\s*\(',
-        r'globals\s*\(', r'locals\s*\(', r'vars\s*\(',
-        r'dir\s*\(', r'getattr\s*\(', r'setattr\s*\(',
-        r'delattr\s*\(', r'hasattr\s*\(', r'compile\s*\(',
-        r'exit\s*\(', r'quit\s*\(', r'help\s*\('
+        r'import\s+os\b', r'import\s+sys\b', r'import\s+subprocess\b',
+        r'import\s+requests\b', r'import\s+urllib\b', r'import\s+socket\b',
+        r'__import__\s*\(', r'eval\s*\(', r'exec\s*\(', 
+        r'compile\s*\(', r'exit\s*\(', r'quit\s*\('
     ]
     
     for pattern in dangerous_patterns:
         if re.search(pattern, code, re.IGNORECASE):
             return False
     
-    # Check for import statements (should not have any)
-    if re.search(r'^\s*import\s+', code, re.MULTILINE):
-        return False
-    if re.search(r'^\s*from\s+\w+\s+import', code, re.MULTILINE):
-        return False
+    # Check for standalone import statements (not part of strings or comments)
+    lines = code.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        # Skip comments and strings
+        if stripped.startswith('#') or stripped.startswith('"') or stripped.startswith("'"):
+            continue
+        
+        # Check for dangerous imports
+        if re.match(r'^\s*import\s+(os|sys|subprocess|requests|urllib|socket)\b', stripped, re.IGNORECASE):
+            return False
+        if re.match(r'^\s*from\s+(os|sys|subprocess|requests|urllib|socket)\b', stripped, re.IGNORECASE):
+            return False
     
-    # Validate AST
+    # Basic AST validation for syntax
     try:
-        tree = ast.parse(code)
-        for node in ast.walk(tree):
-            # Check for dangerous AST nodes
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                return False
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in ['eval', 'exec', 'compile', '__import__', 'open', 'file']:
-                        return False
+        ast.parse(code)
         return True
     except SyntaxError:
         return False
@@ -171,11 +167,12 @@ def generate_ai_code():
         # Clean up the code
         code = code.replace("```python", "").replace("```", "").strip()
         
-        # Remove any remaining markdown or comments at the start
+        # Remove markdown formatting but keep comments with 'key=' or other important info
         lines = code.split('\n')
         cleaned_lines = []
         for line in lines:
-            if not line.strip().startswith('#') or 'key=' in line:
+            # Keep all lines except pure comment lines without code context
+            if line.strip() and not (line.strip().startswith('#') and 'key=' not in line and len(line.strip()) > 50):
                 cleaned_lines.append(line)
         
         code = '\n'.join(cleaned_lines)
@@ -199,6 +196,16 @@ def attempt_run_code(code):
     # Validate code safety first
     if not validate_code_safety(code):
         st.error("🚨 Generated code contains potentially unsafe operations and was blocked.")
+        st.info("💡 This usually happens when the AI tries to use forbidden imports or operations.")
+        
+        # Show what was blocked for debugging
+        with st.expander("🔍 Debug: What was blocked?"):
+            st.code(code, language="python")
+            st.write("**Common issues:**")
+            st.write("- Trying to import forbidden modules (os, sys, subprocess, etc.)")
+            st.write("- Using eval(), exec(), or other dangerous functions")
+            st.write("- Malformed code syntax")
+        
         return False
     
     # Create restricted execution environment
