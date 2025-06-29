@@ -33,7 +33,7 @@ if st.button("Generate Streamlit Code"):
                         )},
                         {"role": "user", "content": f"Write Streamlit code that {user_prompt}"},
                     ],
-                    max_tokens=500
+                    max_tokens=800
                 )
 
                 generated_code = response.choices[0].message.content.strip()
@@ -44,20 +44,17 @@ if st.button("Generate Streamlit Code"):
                 st.divider()
                 st.subheader("Live Preview Below:")
 
-                # Provide necessary objects for execution
-                exec_environment = {"st": st, "np": np, "plt": plt}
-
-                # Remove import lines for safe execution within current environment
-                filtered_lines = []
-                for line in generated_code.split("\n"):
-                    if not line.strip().startswith("import"):
-                        filtered_lines.append(line)
-
-                safe_preview = "\n".join(filtered_lines)
+                # Provide existing modules for execution
+                exec_environment = {
+                    "st": st,
+                    "np": np,
+                    "plt": plt,
+                    "__builtins__": __builtins__,  # Allow basic built-ins like range, len, etc.
+                }
 
                 with st.container():
                     try:
-                        exec(safe_preview, exec_environment)
+                        exec(generated_code, exec_environment)
                     except Exception as e:
                         st.error(f"Error running preview: {e}")
 
