@@ -2,134 +2,494 @@ import streamlit as st
 import openai
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 import uuid
+import time
+import ast
+import re
+import traceback
+from functools import wraps
+from datetime import datetime
 
 # Secure API key from Streamlit Secrets
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+try:
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
+except Exception:
+    st.error("⚠️ OpenAI API key not found in secrets. Please configure OPENAI_API_KEY in your Streamlit secrets.")
+    st.stop()
 
-st.set_page_config(page_title="AI Streamlit App Builder", layout="centered")
-
-st.title("🔧 AI Streamlit App Generator — Iterative, Safe, User-Friendly")
+st.set_page_config(
+    page_title="AI Streamlit App Builder", 
+    layout="centered",
+    page_icon="🔧",
+    initial_sidebar_state="expanded"
+)
 
 # --------------------------
-# Initialise session state
+# Security & Validation Functions
 # --------------------------
-if "conversation" not in st.session_state:
-    st.session_state.conversation = [
-        {"role": "system", "content": (
-            "You are an expert Python developer generating valid, concise Streamlit code to progressively build an interactive app. "
-            "Your responses will be inserted dynamically using exec(), within an existing Streamlit app. "
-            "The following modules are already imported: 'streamlit as st', 'numpy as np', 'matplotlib.pyplot as plt'. "
-            "Do NOT include import statements. Use 'st', 'np', and 'plt' directly. "
-            "When defining Streamlit widgets (e.g., st.slider, st.number_input, st.text_input), you MUST include a unique key argument for each widget, "
-            "such as key='slider_damping_abc123'. You may use random or descriptive suffixes to ensure keys are unique. "
-            "Your code should: "
-            "- Define Streamlit widgets with unique keys "
-            "- Plot graphs using plt.figure() or plt.subplots() "
-            "- Display figures with st.pyplot(plt.gcf()) or st.pyplot(fig) "
-            "- Ensure all variables used are defined within your code block "
-            "Output ONLY valid, executable Python code. Do not include explanations, markdown, comments, or additional text."
-        )}
+
+def validate_code_safety(code):
+    """Validate generated code for safety and allowed operations"""
+    if not code or not isinstance(code, str):
+        return False
+    
+    # Check for dangerous patterns
+    dangerous_patterns = [
+        r'import\s+os', r'import\s+sys', r'import\s+subprocess',
+        r'import\s+requests', r'import\s+urllib', r'import\s+socket',
+        r'__import__', r'eval\s*\(', r'exec\s*\(', r'open\s*\(',
+        r'file\s*\(', r'input\s*\(', r'raw_input\s*\(',
+        r'globals\s*\(', r'locals\s*\(', r'vars\s*\(',
+        r'dir\s*\(', r'getattr\s*\(', r'setattr\s*\(',
+        r'delattr\s*\(', r'hasattr\s*\(', r'compile\s*\(',
+        r'exit\s*\(', r'quit\s*\(', r'help\s*\('
     ]
-    st.session_state.generated_code = ""
-    st.session_state.new_code_attempt = ""
-    st.session_state.initial_prompt_locked = False
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, code, re.IGNORECASE):
+            return False
+    
+    # Check for import statements (should not have any)
+    if re.search(r'^\s*import\s+', code, re.MULTILINE):
+        return False
+    if re.search(r'^\s*from\s+\w+\s+import', code, re.MULTILINE):
+        return False
+    
+    # Validate AST
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            # Check for dangerous AST nodes
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                return False
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in ['eval', 'exec', 'compile', '__import__', 'open', 'file']:
+                        return False
+        return True
+    except SyntaxError:
+        return False
+
+def rate_limit(max_calls_per_minute=15):
+    """Rate limiting decorator for API calls"""
+    def decorator(func):
+        if not hasattr(func, 'calls'):
+            func.calls = []
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            func.calls[:] = [call for call in func.calls if now - call < 60]
+            
+            if len(func.calls) >= max_calls_per_minute:
+                st.error(f"⏱️ Rate limit exceeded. Please wait before making more requests.")
+                return None
+            
+            func.calls.append(now)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 # --------------------------
-# Define helper functions
+# Session State Management
 # --------------------------
+
+def initialize_session_state():
+    """Initialize session state with safe defaults"""
+    defaults = {
+        "conversation": [create_system_message()],
+        "generated_code": "",
+        "code_history": [],
+        "app_metadata": {
+            "created_at": datetime.now().isoformat(),
+            "version": 1,
+            "total_iterations": 0
+        },
+        "initial_prompt_locked": False,
+        "last_successful_code": "",
+        "api_calls_made": 0
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+def create_system_message():
+    """Create system message for AI with safety guidelines"""
+    return {
+        "role": "system", 
+        "content": f"""You are an expert Streamlit developer creating safe, interactive apps.
+
+STRICT RULES:
+- Use ONLY these modules: streamlit (st), numpy (np), matplotlib.pyplot (plt), pandas (pd)
+- NO import statements whatsoever
+- ALL widgets MUST have unique keys using format: key='widget_name_{uuid.uuid4().hex[:8]}'
+- Use st.pyplot(fig) for matplotlib plots, always create figure with plt.figure() or plt.subplots()
+- Handle all errors gracefully with try/except blocks
+- Use st.session_state for persistent data
+- Keep code clean, readable, and under 100 lines when possible
+- Add helpful comments for complex logic
+- Use descriptive variable names
+
+ABSOLUTELY FORBIDDEN:
+- File operations, network requests, system calls
+- eval(), exec(), __import__(), open(), file()
+- Global variables outside functions
+- Dangerous operations or security risks
+
+WIDGET KEY EXAMPLES:
+- st.slider("Label", min_val, max_val, key=f'slider_{uuid.uuid4().hex[:8]}')
+- st.text_input("Label", key=f'input_{uuid.uuid4().hex[:8]}')
+
+OUTPUT: Only clean, executable Python code with no explanations or markdown."""
+    }
+
+# --------------------------
+# AI Code Generation
+# --------------------------
+
+@rate_limit(max_calls_per_minute=12)
 def generate_ai_code():
-    """Generates AI code based on full conversation."""
-    client = openai.Client()
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=st.session_state.conversation,
-        max_tokens=800
-    )
-    code = response.choices[0].message.content.strip()
-    code = code.replace("```python", "").replace("```", "").strip()
-    return code
+    """Generate AI code with error handling and validation"""
+    try:
+        client = openai.Client()
+        
+        # Limit conversation history to prevent token overflow
+        limited_conversation = st.session_state.conversation[-10:]  # Last 10 messages
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=limited_conversation,
+            max_tokens=1200,
+            temperature=0.1,  # Lower temperature for more consistent code
+            top_p=0.9
+        )
+        
+        code = response.choices[0].message.content.strip()
+        
+        # Clean up the code
+        code = code.replace("```python", "").replace("```", "").strip()
+        
+        # Remove any remaining markdown or comments at the start
+        lines = code.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            if not line.strip().startswith('#') or 'key=' in line:
+                cleaned_lines.append(line)
+        
+        code = '\n'.join(cleaned_lines)
+        
+        st.session_state.api_calls_made += 1
+        return code
+        
+    except Exception as e:
+        st.error(f"🔴 OpenAI API Error: {str(e)}")
+        return None
+
+# --------------------------
+# Code Execution
+# --------------------------
 
 def attempt_run_code(code):
-    """Attempts to execute code safely. Returns True if successful."""
-    exec_environment = {"st": st, "np": np, "plt": plt, "__builtins__": __builtins__}
+    """Safely execute generated code with restricted environment"""
+    if not code:
+        return False
+    
+    # Validate code safety first
+    if not validate_code_safety(code):
+        st.error("🚨 Generated code contains potentially unsafe operations and was blocked.")
+        return False
+    
+    # Create restricted execution environment
+    exec_environment = {
+        "st": st,
+        "np": np,
+        "plt": plt,
+        "pd": pd,
+        "uuid": uuid,
+        "time": time,
+        "datetime": datetime,
+        "__builtins__": {
+            "range": range,
+            "len": len,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "set": set,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "abs": abs,
+            "round": round,
+            "enumerate": enumerate,
+            "zip": zip,
+            "isinstance": isinstance,
+            "type": type,
+            "print": print
+        }
+    }
+    
     try:
+        # Execute in a container for better error isolation
         with st.container():
             exec(code, exec_environment)
         return True
+        
     except Exception as e:
-        st.error(f"Error in generated code: {e}")
+        st.error(f"💥 Code Execution Error: {str(e)}")
+        
+        # Show debugging info in expander
+        with st.expander("🔍 Debug Information"):
+            st.code(traceback.format_exc(), language="python")
+            st.subheader("Problematic Code:")
+            st.code(code, language="python")
+        
         return False
 
 # --------------------------
-# Step 1: Initial Prompt
+# UI Helper Functions
 # --------------------------
-if not st.session_state.initial_prompt_locked:
-    st.subheader("Step 1: Describe Your App")
-    initial_prompt = st.text_input("Describe your app's purpose (cannot be changed):", key="initial_prompt_input")
 
-    if st.button("Generate Initial App") and initial_prompt:
-        st.session_state.conversation.append({"role": "user", "content": initial_prompt})
-        code = generate_ai_code()
-        st.session_state.new_code_attempt = code
+def save_code_to_history(code, prompt=""):
+    """Save code version to history"""
+    if code and code != st.session_state.get("last_successful_code", ""):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st.session_state.code_history.append({
+            "timestamp": timestamp,
+            "code": code,
+            "prompt": prompt,
+            "version": len(st.session_state.code_history) + 1
+        })
+        st.session_state.last_successful_code = code
+        
+        # Limit history to last 10 versions
+        if len(st.session_state.code_history) > 10:
+            st.session_state.code_history = st.session_state.code_history[-10:]
 
-        if attempt_run_code(code):
-            st.session_state.generated_code = code
-            st.session_state.conversation.append({"role": "assistant", "content": code})
-            st.session_state.initial_prompt_locked = True
-            st.success("Initial app generated successfully.")
-        else:
-            st.warning("Please revise your prompt and try again.")
+def display_app_stats():
+    """Display app statistics in sidebar"""
+    with st.sidebar:
+        st.subheader("📊 App Statistics")
+        stats = st.session_state.app_metadata
+        
+        st.metric("Versions Created", len(st.session_state.code_history))
+        st.metric("API Calls Made", st.session_state.api_calls_made)
+        st.metric("Current Version", stats.get("version", 1))
+        
+        if st.session_state.code_history:
+            st.write("**Latest Update:**")
+            st.write(st.session_state.code_history[-1]["timestamp"])
 
-# --------------------------
-# Step 2: Main Iterative Builder
-# --------------------------
-if st.session_state.generated_code:
-    st.divider()
-    st.success("Current Working App Code:")
-    st.code(st.session_state.generated_code, language="python")
-
-    st.divider()
-    st.subheader("Live App Preview:")
-
-    if attempt_run_code(st.session_state.generated_code):
-        st.info("You can refine your app using additional prompts.")
-
-    st.divider()
-    st.subheader("Step 3: Refine Your App")
-
-    follow_up = st.text_input("Add features, improvements, or fixes:", key="follow_up_prompt")
-
-    if st.button("Update App with Prompt") and follow_up:
-        st.session_state.conversation.append({"role": "user", "content": follow_up})
-        code = generate_ai_code()
-        st.session_state.new_code_attempt = code
-
-        if attempt_run_code(code):
-            st.session_state.generated_code = code
-            st.session_state.conversation.append({"role": "assistant", "content": code})
-            st.success("App updated successfully.")
-        else:
-            st.warning("Automatically sending error to AI for correction...")
-            st.session_state.conversation.append({
-                "role": "user",
-                "content": f"The last version failed with an error. Please fix it. Error details: {code[:100]}..."
-            })
-            code = generate_ai_code()
-            st.session_state.new_code_attempt = code
-
-            if attempt_run_code(code):
-                st.session_state.generated_code = code
-                st.session_state.conversation.append({"role": "assistant", "content": code})
-                st.success("AI corrected the error and updated the app.")
-            else:
-                st.error("Second attempt also failed. Keeping last working version.")
+def show_code_history():
+    """Display code history with revert functionality"""
+    if st.session_state.code_history:
+        with st.expander("📝 Version History", expanded=False):
+            for i, entry in enumerate(reversed(st.session_state.code_history)):
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.write(f"**Version {entry['version']}** - {entry['timestamp']}")
+                    if entry['prompt']:
+                        st.write(f"*Prompt: {entry['prompt'][:50]}...*")
+                    st.code(entry['code'][:200] + "..." if len(entry['code']) > 200 else entry['code'], 
+                           language="python")
+                
+                with col2:
+                    if st.button(f"Revert", key=f"revert_{i}"):
+                        st.session_state.generated_code = entry['code']
+                        st.success(f"✅ Reverted to Version {entry['version']}")
+                        st.rerun()
 
 # --------------------------
-# Optional: Reset Button
+# Main Application
 # --------------------------
-st.divider()
-with st.expander("⚙️ Reset App (Start Over)"):
-    if st.button("Reset All Progress"):
-        st.session_state.clear()
-        st.experimental_rerun()
+
+def main():
+    # Initialize session state
+    initialize_session_state()
+    
+    # Title and description
+    st.title("🔧 AI Streamlit App Generator")
+    st.markdown("### *Iterative, Safe, User-Friendly*")
+    
+    # Sidebar with stats and controls
+    display_app_stats()
+    
+    with st.sidebar:
+        st.divider()
+        if st.button("🔄 Reset All", type="secondary"):
+            st.session_state.clear()
+            st.rerun()
+        
+        st.divider()
+        with st.expander("ℹ️ How to Use"):
+            st.markdown("""
+            1. **Describe** your app idea
+            2. **Generate** initial version
+            3. **Refine** with additional prompts
+            4. **Iterate** until perfect!
+            
+            **Safe Features:**
+            - Code validation
+            - Rate limiting
+            - Error handling
+            - Version history
+            """)
+    
+    # --------------------------
+    # Step 1: Initial Prompt
+    # --------------------------
+    if not st.session_state.initial_prompt_locked:
+        st.subheader("🎯 Step 1: Describe Your App")
+        st.markdown("*What kind of interactive app would you like to create?*")
+        
+        # Example prompts
+        with st.expander("💡 Example Prompts"):
+            examples = [
+                "Create a calculator with basic math operations",
+                "Build a data visualization dashboard with sample data",
+                "Make an interactive plot with sliders for parameters",
+                "Create a simple game or quiz app",
+                "Build a form with validation and results display"
+            ]
+            for example in examples:
+                if st.button(f"📝 {example}", key=f"example_{hash(example)}"):
+                    st.session_state.temp_prompt = example
+        
+        initial_prompt = st.text_area(
+            "Describe your app's purpose:",
+            value=st.session_state.get("temp_prompt", ""),
+            placeholder="E.g., Create a mortgage calculator with sliders for loan amount, interest rate, and term...",
+            height=100,
+            key="initial_prompt_input"
+        )
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            generate_button = st.button("🚀 Generate Initial App", type="primary", disabled=not initial_prompt)
+        with col2:
+            st.write(f"**Characters:** {len(initial_prompt)}/500")
+        
+        if generate_button and initial_prompt:
+            with st.spinner("🤖 AI is generating your app..."):
+                st.session_state.conversation.append({"role": "user", "content": initial_prompt})
+                code = generate_ai_code()
+                
+                if code:
+                    if attempt_run_code(code):
+                        st.session_state.generated_code = code
+                        st.session_state.conversation.append({"role": "assistant", "content": code})
+                        st.session_state.initial_prompt_locked = True
+                        st.session_state.app_metadata["version"] = 1
+                        save_code_to_history(code, initial_prompt)
+                        st.success("✅ Initial app generated successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Generated code had issues. Please try a different description.")
+                else:
+                    st.error("❌ Failed to generate code. Please check your API key and try again.")
+    
+    # --------------------------
+    # Step 2: Main App Display
+    # --------------------------
+    if st.session_state.generated_code:
+        st.divider()
+        
+        # Show current code
+        with st.expander("💻 Current App Code", expanded=False):
+            st.code(st.session_state.generated_code, language="python")
+            
+            # Copy to clipboard button
+            st.markdown("```python\n" + st.session_state.generated_code + "\n```")
+        
+        st.divider()
+        
+        # Live preview
+        st.subheader("🎨 Live App Preview")
+        preview_container = st.container()
+        
+        with preview_container:
+            with st.spinner("Rendering your app..."):
+                success = attempt_run_code(st.session_state.generated_code)
+                if success:
+                    st.success("✅ App is running perfectly!")
+                else:
+                    st.error("❌ App encountered an error")
+        
+        st.divider()
+        
+        # --------------------------
+        # Step 3: Iterative Refinement
+        # --------------------------
+        st.subheader("🔧 Step 3: Refine Your App")
+        st.markdown("*Add features, fix issues, or improve functionality*")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            follow_up = st.text_area(
+                "What would you like to change or add?",
+                placeholder="E.g., Add a chart showing the results, change the color scheme, add input validation...",
+                height=80,
+                key="follow_up_prompt"
+            )
+        
+        with col2:
+            st.write("**Quick Actions:**")
+            if st.button("🎨 Improve UI", key="improve_ui"):
+                st.session_state.temp_followup = "Make the UI more attractive with better colors and layout"
+            if st.button("📊 Add Charts", key="add_charts"):
+                st.session_state.temp_followup = "Add meaningful data visualizations and charts"
+            if st.button("🔧 Fix Issues", key="fix_issues"):
+                st.session_state.temp_followup = "Fix any bugs or improve error handling"
+        
+        # Use temp followup if set
+        if st.session_state.get("temp_followup"):
+            follow_up = st.session_state.temp_followup
+            st.session_state.temp_followup = ""
+        
+        if st.button("🔄 Update App", type="primary", disabled=not follow_up) and follow_up:
+            with st.spinner("🤖 AI is updating your app..."):
+                st.session_state.conversation.append({"role": "user", "content": follow_up})
+                code = generate_ai_code()
+                
+                if code:
+                    if attempt_run_code(code):
+                        st.session_state.generated_code = code
+                        st.session_state.conversation.append({"role": "assistant", "content": code})
+                        st.session_state.app_metadata["version"] += 1
+                        save_code_to_history(code, follow_up)
+                        st.success("✅ App updated successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Update failed. Trying auto-correction...")
+                        
+                        # Auto-correction attempt
+                        correction_prompt = f"The last code update failed with errors. Please fix the issues and provide working code. The user requested: {follow_up}"
+                        st.session_state.conversation.append({"role": "user", "content": correction_prompt})
+                        
+                        corrected_code = generate_ai_code()
+                        if corrected_code and attempt_run_code(corrected_code):
+                            st.session_state.generated_code = corrected_code
+                            st.session_state.conversation.append({"role": "assistant", "content": corrected_code})
+                            save_code_to_history(corrected_code, f"Auto-fix: {follow_up}")
+                            st.success("✅ AI auto-corrected the issues!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Auto-correction failed. Keeping previous working version.")
+                else:
+                    st.error("❌ Failed to generate updated code.")
+        
+        # Show version history
+        show_code_history()
+
+# --------------------------
+# Run the application
+# --------------------------
+if __name__ == "__main__":
+    main()
