@@ -1,7 +1,7 @@
 import streamlit as st
 import openai
 
-# Securely load your API key from Streamlit Cloud secrets
+# Secure API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="Streamlit App Code Generator with AI", layout="centered")
@@ -20,8 +20,10 @@ if st.button("Generate Streamlit Code"):
         with st.spinner("Generating code with AI..."):
 
             try:
-                # Call OpenAI to generate Streamlit code
-                response = openai.ChatCompletion.create(
+                # New OpenAI 1.0+ syntax
+                client = openai.Client()
+
+                response = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
                         {"role": "system", "content": "You are an expert at writing valid, complete Streamlit Python code. Only output the code, no explanations."},
@@ -38,7 +40,7 @@ if st.button("Generate Streamlit Code"):
                 st.divider()
                 st.subheader("Live Preview Below:")
 
-                # Extract only the runnable part (remove imports)
+                # Extract only runnable code (skip imports)
                 safe_preview = "\n".join([
                     line for line in generated_code.split("\n")
                     if not line.strip().startswith("import")
