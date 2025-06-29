@@ -2,7 +2,6 @@ import streamlit as st
 import openai
 import numpy as np
 import matplotlib.pyplot as plt
-import re
 
 # Secure API key from Streamlit Secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -29,8 +28,11 @@ if st.button("Generate Streamlit Code"):
                     messages=[
                         {"role": "system", "content": (
                             "You are an expert at writing short, complete, valid Streamlit Python apps. "
-                            "Your responses are strictly limited in token count, so prioritise concise, minimal code that runs correctly. "
-                            "Only output valid Python code. Do not include explanations, comments, or extra text."
+                            "Your response will be inserted inside an existing Streamlit app using exec(). "
+                            "The following imports already exist and should not be included again: "
+                            "'import streamlit as st', 'import numpy as np', 'import matplotlib.pyplot as plt'. "
+                            "Write only the code that would go inside the body of the Streamlit app after st.title(). "
+                            "Do not include import statements, explanations, comments, or additional text."
                         )},
                         {"role": "user", "content": f"Write Streamlit code that {user_prompt}"},
                     ],
@@ -45,12 +47,6 @@ if st.button("Generate Streamlit Code"):
                 st.divider()
                 st.subheader("Live Preview Below:")
 
-                # Auto-fix common AI mistakes before running preview
-                corrected_code = generated_code
-
-                # Fix incorrect st.pyplot(plt) calls
-                corrected_code = re.sub(r'st\.pyplot\s*\(\s*plt\s*\)', 'st.pyplot(plt.gcf())', corrected_code)
-
                 # Provide existing modules for execution
                 exec_environment = {
                     "st": st,
@@ -61,7 +57,7 @@ if st.button("Generate Streamlit Code"):
 
                 with st.container():
                     try:
-                        exec(corrected_code, exec_environment)
+                        exec(generated_code, exec_environment)
                     except Exception as e:
                         st.error(f"Error running preview: {e}")
 
@@ -70,3 +66,4 @@ if st.button("Generate Streamlit Code"):
 
     else:
         st.warning("Please enter a prompt to continue.")
+
