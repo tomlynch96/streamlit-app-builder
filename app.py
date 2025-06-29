@@ -8,11 +8,11 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="Streamlit AI App Generator with Dialogue", layout="centered")
 
-st.title("🔧 AI Streamlit App Generator — Iterative Builder")
+st.title("🔧 AI Streamlit App Generator — Iterative, Safe Builder")
 
 st.write("Describe what you want your app to do. You can then add more prompts to refine the app, building the code step by step. Your original description cannot be deleted.")
 
-# Initialise conversation and code state
+# Initialise session state
 if "conversation" not in st.session_state:
     st.session_state.conversation = [
         {"role": "system", "content": (
@@ -29,6 +29,7 @@ if "conversation" not in st.session_state:
         )}
     ]
     st.session_state.generated_code = ""
+    st.session_state.new_code_attempt = ""
 
 # Get initial prompt if not already provided
 if not any(msg["role"] == "user" for msg in st.session_state.conversation[1:]):
@@ -46,12 +47,23 @@ if not any(msg["role"] == "user" for msg in st.session_state.conversation[1:]):
             ai_message = response.choices[0].message.content.strip()
             ai_message = ai_message.replace("```python", "").replace("```", "").strip()
 
-            st.session_state.conversation.append({"role": "assistant", "content": ai_message})
-            st.session_state.generated_code = ai_message
+            st.session_state.new_code_attempt = ai_message
 
-# Show existing code if generated
+            # Attempt to run new code
+            exec_environment = {"st": st, "np": np, "plt": plt, "__builtins__": __builtins__}
+            with st.container():
+                try:
+                    exec(st.session_state.new_code_attempt, exec_environment)
+                    st.session_state.generated_code = st.session_state.new_code_attempt
+                    st.session_state.conversation.append({"role": "assistant", "content": ai_message})
+                    st.success("App generated successfully.")
+                except Exception as e:
+                    st.error(f"Error in generated code: {e}")
+                    st.warning("Fix your prompt and try again. Last working version retained.")
+
+# Display last working version if available
 if st.session_state.generated_code:
-    st.success("Current Generated Code:")
+    st.success("Current Working Code:")
     st.code(st.session_state.generated_code, language="python")
 
     st.divider()
@@ -63,7 +75,7 @@ if st.session_state.generated_code:
         try:
             exec(st.session_state.generated_code, exec_environment)
         except Exception as e:
-            st.error(f"Error running preview: {e}")
+            st.error(f"Unexpected error running last working version: {e}")
 
     st.divider()
     st.subheader("Refine Your App")
@@ -82,5 +94,15 @@ if st.session_state.generated_code:
             ai_message = response.choices[0].message.content.strip()
             ai_message = ai_message.replace("```python", "").replace("```", "").strip()
 
-            st.session_state.conversation.append({"role": "assistant", "content": ai_message})
-            st.session_state.generated_code = ai_message
+            st.session_state.new_code_attempt = ai_message
+
+            # Attempt to run updated code
+            with st.container():
+                try:
+                    exec(st.session_state.new_code_attempt, exec_environment)
+                    st.session_state.generated_code = st.session_state.new_code_attempt
+                    st.session_state.conversation.append({"role": "assistant", "content": ai_message})
+                    st.success("App updated successfully.")
+                except Exception as e:
+                    st.error(f"Error in generated code: {e}")
+                    st.warning("Last working version retained.")
