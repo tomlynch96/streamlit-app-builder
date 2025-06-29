@@ -46,6 +46,9 @@ if st.button("Generate Streamlit Code"):
 
                 generated_code = response.choices[0].message.content.strip()
 
+                # Clean up unintended markdown formatting
+                generated_code = generated_code.replace("```python", "").replace("```", "").strip()
+
                 st.success("Here's your generated Streamlit code:")
                 st.code(generated_code, language="python")
 
