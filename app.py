@@ -1,45 +1,57 @@
 import streamlit as st
+import openai
 
-st.set_page_config(page_title="Streamlit App Code Generator", layout="centered")
+# Securely load your API key from Streamlit Cloud secrets
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.title("🔧 AI Streamlit Code Generator with Live Preview (Test Mode)")
+st.set_page_config(page_title="Streamlit App Code Generator with AI", layout="centered")
 
-st.write("Describe what you want your Streamlit app to do. The AI will generate Streamlit code based on your prompt.")
+st.title("🔧 AI Streamlit Code Generator with Live Preview")
+
+st.write("Describe what you want your Streamlit app to do. The AI will generate valid Streamlit code based on your prompt.")
 
 # User input
 user_prompt = st.text_input("What do you want the app to do?", placeholder="e.g., create a graph of sine and cosine")
 
-# Button to trigger code generation
+# Generate button
 if st.button("Generate Streamlit Code"):
 
     if user_prompt:
-        with st.spinner("Generating code..."):
-            
-            # Simulated AI-generated code for testing
-            generated_code = f"""
-import streamlit as st
+        with st.spinner("Generating code with AI..."):
 
-st.title("Example App: {user_prompt}")
+            try:
+                # Call OpenAI to generate Streamlit code
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are an expert at writing valid, complete Streamlit Python code. Only output the code, no explanations."},
+                        {"role": "user", "content": f"Write Streamlit code that {user_prompt}"},
+                    ],
+                    max_tokens=500
+                )
 
-st.write("This is a preview based on your description.")
-"""
-            st.success("Here's your generated Streamlit code:")
-            st.code(generated_code, language="python")
+                generated_code = response.choices[0].message.content.strip()
 
-            st.divider()
-            st.subheader("Live Preview Below:")
+                st.success("Here's your generated Streamlit code:")
+                st.code(generated_code, language="python")
 
-            # Extract only the runnable part to avoid re-imports
-            preview_code = f"""
-st.title("Example App: {user_prompt}")
-st.write("This is a preview based on your description.")
-"""
+                st.divider()
+                st.subheader("Live Preview Below:")
 
-            with st.container():
-                try:
-                    exec(preview_code)
-                except Exception as e:
-                    st.error(f"Error running preview: {e}")
+                # Extract only the runnable part (remove imports)
+                safe_preview = "\n".join([
+                    line for line in generated_code.split("\n")
+                    if not line.strip().startswith("import")
+                ])
+
+                with st.container():
+                    try:
+                        exec(safe_preview)
+                    except Exception as e:
+                        st.error(f"Error running preview: {e}")
+
+            except Exception as e:
+                st.error(f"Error generating code: {e}")
 
     else:
         st.warning("Please enter a prompt to continue.")
