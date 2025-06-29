@@ -2,6 +2,7 @@ import streamlit as st
 import openai
 import numpy as np
 import matplotlib.pyplot as plt
+import re
 
 # Secure API key from Streamlit Secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -44,17 +45,23 @@ if st.button("Generate Streamlit Code"):
                 st.divider()
                 st.subheader("Live Preview Below:")
 
+                # Auto-fix common AI mistakes before running preview
+                corrected_code = generated_code
+
+                # Fix incorrect st.pyplot(plt) calls
+                corrected_code = re.sub(r'st\.pyplot\s*\(\s*plt\s*\)', 'st.pyplot(plt.gcf())', corrected_code)
+
                 # Provide existing modules for execution
                 exec_environment = {
                     "st": st,
                     "np": np,
                     "plt": plt,
-                    "__builtins__": __builtins__,  # Allow basic built-ins like range, len, etc.
+                    "__builtins__": __builtins__,
                 }
 
                 with st.container():
                     try:
-                        exec(generated_code, exec_environment)
+                        exec(corrected_code, exec_environment)
                     except Exception as e:
                         st.error(f"Error running preview: {e}")
 
