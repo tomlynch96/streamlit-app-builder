@@ -12,6 +12,10 @@ st.title("🔧 AI Streamlit Code Generator with Live Preview")
 
 st.write("Describe what you want your Streamlit app to do. The AI will generate valid, minimal Streamlit code based on your prompt.")
 
+# Initialise session state for generated code
+if "generated_code" not in st.session_state:
+    st.session_state.generated_code = ""
+
 # User prompt input
 user_prompt = st.text_input("What do you want the app to do?", placeholder="e.g., create a graph of sine and cosine")
 
@@ -45,32 +49,30 @@ if st.button("Generate Streamlit Code"):
                 )
 
                 generated_code = response.choices[0].message.content.strip()
-
-                # Clean up unintended markdown formatting
                 generated_code = generated_code.replace("```python", "").replace("```", "").strip()
 
-                st.success("Here's your generated Streamlit code:")
-                st.code(generated_code, language="python")
-
-                st.divider()
-                st.subheader("Live Preview Below:")
-
-                # Provide existing modules for execution
-                exec_environment = {
-                    "st": st,
-                    "np": np,
-                    "plt": plt,
-                    "__builtins__": __builtins__,
-                }
-
-                with st.container():
-                    try:
-                        exec(generated_code, exec_environment)
-                    except Exception as e:
-                        st.error(f"Error running preview: {e}")
+                st.session_state.generated_code = generated_code
 
             except Exception as e:
                 st.error(f"Error generating code: {e}")
 
-    else:
-        st.warning("Please enter a prompt to continue.")
+# Display generated code if it exists
+if st.session_state.generated_code:
+    st.success("Here's your generated Streamlit code:")
+    st.code(st.session_state.generated_code, language="python")
+
+    st.divider()
+    st.subheader("Live Preview Below:")
+
+    exec_environment = {
+        "st": st,
+        "np": np,
+        "plt": plt,
+        "__builtins__": __builtins__,
+    }
+
+    with st.container():
+        try:
+            exec(st.session_state.generated_code, exec_environment)
+        except Exception as e:
+            st.error(f"Error running preview: {e}")
