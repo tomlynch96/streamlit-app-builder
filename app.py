@@ -2,31 +2,40 @@ import streamlit as st
 import openai
 import os
 
-# Set your OpenAI API key (or use st.secrets for deployment)
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Or set as a string temporarily
+# Optional: Pull API key from Streamlit secrets if deploying later
+# openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.title("AI Streamlit Code Generator")
+# For local testing - replace with your actual key temporarily
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Recommended: set as environment variable
 
-# User prompt input
-user_prompt = st.text_input("Describe what you want your Streamlit app to do:")
+st.set_page_config(page_title="Streamlit App Code Generator", layout="centered")
+
+st.title("🔧 AI Streamlit Code Generator")
+
+st.write("Describe what you want your Streamlit app to do. The AI will generate Streamlit code based on your prompt.")
+
+# User input
+user_prompt = st.text_input("What do you want the app to do?", placeholder="e.g., create a graph of sine and cosine")
 
 # Generate button
-if st.button("Generate Code"):
+if st.button("Generate Streamlit Code"):
     if user_prompt:
         with st.spinner("Generating code..."):
-            # Call OpenAI to generate Streamlit code
-            response = openai.ChatCompletion.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are an expert Streamlit app generator. Respond ONLY with valid Python Streamlit code."},
-                    {"role": "user", "content": f"Create Streamlit code that {user_prompt}"},
-                ],
-                max_tokens=500
-            )
-
-            generated_code = response.choices[0].message.content.strip()
-
-            st.success("Code generated!")
-            st.code(generated_code, language="python")
+            try:
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are an expert at writing valid, complete Streamlit Python code. Only output the code, no explanations."},
+                        {"role": "user", "content": f"Write Streamlit code that {user_prompt}"},
+                    ],
+                    max_tokens=500
+                )
+                generated_code = response.choices[0].message.content.strip()
+                
+                st.success("Here's your generated Streamlit code:")
+                st.code(generated_code, language="python")
+            
+            except Exception as e:
+                st.error(f"Error generating code: {e}")
     else:
-        st.warning("Please enter a prompt first.")
+        st.warning("Please enter a prompt to continue.")
